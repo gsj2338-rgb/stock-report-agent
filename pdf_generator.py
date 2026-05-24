@@ -184,9 +184,46 @@ def _market_overview(data: dict, S: dict, analysis: dict | None) -> list:
 # ---------------------------------------------------------------------------
 # Section 02: 섹터별 종목 분석
 # ---------------------------------------------------------------------------
+def _compute_stock_stats(reports: list, current_price: int) -> dict:
+    """Compute consensus counts and average target price upside."""
+    buy = neutral = sell = 0
+    targets = []
+    for r in reports:
+        op = str(r.get("opinion", ""))
+        if any(w in op for w in ["매수", "BUY", "Buy", "강력", "Strong"]):
+            buy += 1
+        elif any(w in op for w in ["매도", "SELL", "Sell"]):
+            sell += 1
+        else:
+            neutral += 1
+        tp = r.get("target_price", 0)
+        if isinstance(tp, (int, float)) and tp > 0:
+            targets.append(float(tp))
+
+    avg_target = sum(targets) / len(targets) if targets else None
+    upside = ((avg_target - current_price) / current_price * 100) if avg_target and current_price else None
+
+    return {
+        "buy": buy, "neutral": neutral, "sell": sell,
+        "avg_target": avg_target, "upside": upside,
+    }
+
+
+def _opinion_style(opinion: str) -> str:
+    op = str(opinion)
+    if any(w in op for w in ["매수", "BUY", "Buy", "강력", "Strong"]):
+        return "td_g"
+    if any(w in op for w in ["매도", "SELL", "Sell"]):
+        return "td_r2"
+    if any(w in op for w in ["중립", "보유", "Neutral", "Hold", "N/A"]):
+        return "td_o"
+    return "td_c"
+
+
 def _sector_analysis(data: dict, S: dict, analysis: dict | None) -> list:
     all_reports = data.get("analyst_reports", []) + data.get("broker_reports", [])
-    story = _section_header("02", "섹터별 종목 분석 — 매수/매도 의견", S)
+    prices = data.get("prices", [])
+    story = _section_header("02", "섹터별 종목 분석 — 매수/매도 의견 및 근거", S)
 
     if not all_reports:
         story.append(Paragraph("애널리스트 리포트 데이터를 수집하지 못했습니다.", S["body"]))
@@ -197,50 +234,90 @@ def _sector_analysis(data: dict, S: dict, analysis: dict | None) -> list:
         ))
         return story
 
+    # Build price lookup: name → close price
+    price_map = {p.get("name", ""): p.get("close", 0) for p in prices}
+
     # Group reports by stock name
     grouped: dict[str, list] = {}
     for r in all_reports:
         name = r.get("stock_name", "기타")
         grouped.setdefault(name, []).append(r)
 
-    headers = ["증권사", "투자의견", "목표주가", "날짜", "리포트 제목"]
-    col_w   = [80, 68, 62, 62, 178]   # 450pt
+    # Per-stock AI analysis (bull/bear thesis) from compose_sections
+    stock_ai = {}
+    if analysis and isinstance(analysis.get("stock_analysis"), dict):
+        stock_ai = analysis["stock_analysis"]
 
-    def _opinion_style(opinion: str) -> str:
-        op = str(opinion)
-        if any(w in op for w in ["매수", "BUY", "Buy", "강력", "Strong"]):
-            return "td_g"
-        if any(w in op for w in ["매도", "SELL", "Sell"]):
-            return "td_r2"
-        if any(w in op for w in ["중립", "보유", "Neutral", "Hold", "N/A"]):
-            return "td_o"
-        return "td_c"
+    report_headers = ["증권사", "투자의견", "목표주가", "날짜", "리포트 제목"]
+    col_w = [80, 68, 62, 62, 178]   # 450pt
 
     for stock_name, reports in sorted(grouped.items()):
-        rows = [[Paragraph(h, S["th"]) for h in headers]]
+        current = price_map.get(stock_name, 0)
+        stats = _compute_stock_stats(reports, current)
+        ai = stock_ai.get(stock_name, {})
+
+        # --- Consensus + upside summary line ---
+        consensus_parts = []
+        if stats["buy"]:    consensus_parts.append(f"매수 {stats['buy']}건")
+        if stats["neutral"]:consensus_parts.append(f"중립 {stats['neutral']}건")
+        if stats["sell"]:   consensus_parts.append(f"매도 {stats['sell']}건")
+        consensus_str = " / ".join(consensus_parts) if consensus_parts else "의견 없음"
+
+        upside_str = ""
+        if stats["upside"] is not None:
+            sign = "+" if stats["upside"] >= 0 else ""
+            avg_t = int(stats["avg_target"])
+            upside_str = f"  |  평균 목표주가 {avg_t:,}원  ({sign}{stats['upside']:.1f}%)"
+
+        # --- Report table ---
+        rows = [[Paragraph(h, S["th"]) for h in report_headers]]
         for r in reports[:10]:
             opinion = str(r.get("opinion", "N/A"))
             tp = r.get("target_price", 0)
             tp_str = f"{int(tp):,}" if isinstance(tp, (int, float)) and tp else (str(tp) if tp else "-")
-            date_str = str(r.get("date", "-"))[:10]
-            title_str = str(r.get("title", "-"))[:55]
             rows.append([
                 Paragraph(str(r.get("broker", r.get("source", "-")))[:14], S["td"]),
                 Paragraph(opinion, S[_opinion_style(opinion)]),
                 Paragraph(tp_str, S["td_r"]),
-                Paragraph(date_str, S["td_c"]),
-                Paragraph(title_str, S["td"]),
+                Paragraph(str(r.get("date", "-"))[:10], S["td_c"]),
+                Paragraph(str(r.get("title", "-"))[:55], S["td"]),
             ])
 
         t = Table(rows, colWidths=col_w, repeatRows=1)
         t.setStyle(_TABLE_STYLE)
 
-        block = [
-            Spacer(1, 4 * mm),
+        # --- Assemble stock block ---
+        block: list = [
+            Spacer(1, 5 * mm),
             Paragraph(f"■ {stock_name}", S["sh_num"]),
+            Paragraph(f"컨센서스: {consensus_str}{upside_str}", S["cap"]),
             Spacer(1, 1 * mm),
             t,
         ]
+
+        # Bull thesis
+        if ai.get("bull_thesis"):
+            block += [
+                Spacer(1, 2 * mm),
+                Paragraph("<font color='#16A34A'><b>▲ 매수 근거</b></font>", S["body"]),
+                Paragraph(ai["bull_thesis"], S["body"]),
+            ]
+
+        # Bear thesis
+        if ai.get("bear_thesis"):
+            block += [
+                Spacer(1, 1 * mm),
+                Paragraph("<font color='#DC2626'><b>▼ 위험 요인 / 매도 근거</b></font>", S["body"]),
+                Paragraph(ai["bear_thesis"], S["body"]),
+            ]
+
+        # Key metrics
+        if ai.get("key_metrics"):
+            block += [
+                Spacer(1, 1 * mm),
+                Paragraph(f"<b>★ 핵심 이슈:</b> {ai['key_metrics']}", S["cap"]),
+            ]
+
         story.append(KeepTogether(block))
 
     story.append(Spacer(1, 3 * mm))

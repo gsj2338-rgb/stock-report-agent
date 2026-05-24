@@ -42,45 +42,53 @@ class Composer:
 </body></html>"""
 
     def compose_summary(self, data: dict) -> str:
-        """Generate a brief plain-text summary for the email body. Falls back to a minimal message on failure."""
+        """
+        Generate a brief narrative paragraph for the email body market summary section.
+        Falls back to a minimal message on failure.
+        """
         try:
             client = anthropic.Anthropic(api_key=self.api_key)
             date = data.get("date", "날짜 미상")
             prices = data.get("prices", [])
             all_reports = data.get("analyst_reports", []) + data.get("broker_reports", [])
-            disclosures = data.get("disclosures", [])
             semi_news = data.get("semi_news", [])
 
-            prompt = f"""{date} 기준 한국 주식 분석 리포트 요약을 이메일 본문용 짧은 텍스트로 작성해주세요.
+            prompt = f"""{date} 기준 한국 주식 시장 요약을 3~4문장으로 작성해주세요.
 
-형식:
-- 3~5문장 핵심 요약 (불릿 없이 자연스러운 문단)
-- 주요 등락 종목 1~2개 수치와 함께 언급
-- 마지막 문장은 "상세 내용은 첨부된 PDF 리포트를 확인해주세요." 로 마무리
+요구사항:
+- 자연스러운 서술형 문단 (불릿 없이)
+- 주요 등락 종목 1~2개를 수치(%)와 함께 언급
+- 오늘 주목할 이슈 또는 테마 한 줄
+- 마지막 문장은 절대 포함하지 마세요 ("상세 내용은..." 문장은 호출 측에서 추가)
 
-데이터:
-종목 시세: {json.dumps(prices[:6], ensure_ascii=False)}
-애널리스트 리포트: {json.dumps(all_reports[:3], ensure_ascii=False)}
-공시: {json.dumps(disclosures[:3], ensure_ascii=False)}
+종목 시세: {json.dumps(prices[:8], ensure_ascii=False)}
+애널리스트 리포트 요약: {json.dumps(all_reports[:4], ensure_ascii=False)}
 반도체 뉴스: {json.dumps(semi_news[:2], ensure_ascii=False)}
 
-200자 이내로 간결하게 작성하세요."""
+150자 이내로 작성하세요."""
 
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=512,
+                max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )
             return response.content[0].text
         except Exception as e:
             logger.error(f"Summary composer error: {e}")
             date = data.get("date", "")
-            return f"{date} 한국 주식 분석 리포트입니다.\n상세 내용은 첨부된 PDF 리포트를 확인해주세요."
+            return f"{date} 한국 주식 분석 리포트입니다."
 
     def compose_sections(self, data: dict) -> dict:
         """
-        Generate structured AI analysis text for each PDF section.
-        Returns dict with keys: market_overview, dart_summary, semi_summary.
+        Generate deep structured AI analysis for the PDF report.
+
+        Returns dict with keys:
+          market_overview  — narrative paragraph for section 01
+          stock_analysis   — dict keyed by stock_name:
+                             {bull_thesis, bear_thesis, key_metrics}
+          dart_summary     — narrative for section 03
+          semi_summary     — Korean-translated narrative for section 04
+
         Falls back to {} on any failure.
         """
         try:
@@ -91,31 +99,56 @@ class Composer:
             disclosures = data.get("disclosures", [])
             semi_news = data.get("semi_news", [])
 
-            prompt = f"""다음 데이터를 분석하여 JSON 형식으로 응답해주세요. 마크다운이나 설명 없이 순수 JSON만 반환하세요.
+            # Group reports by stock for per-stock analysis
+            grouped: dict[str, list] = {}
+            for r in all_reports:
+                name = r.get("stock_name", "기타")
+                grouped.setdefault(name, []).append(r)
 
-반환 형식:
+            grouped_summary = {
+                name: [
+                    {"broker": r.get("broker", ""), "opinion": r.get("opinion", ""),
+                     "target_price": r.get("target_price", ""), "title": r.get("title", "")}
+                    for r in reports
+                ]
+                for name, reports in grouped.items()
+            }
+
+            prompt = f"""한국 주식 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
+마크다운 코드블록 없이 순수 JSON만 반환하세요.
+
+반환 형식 (반드시 이 키 구조를 따르세요):
 {{
-  "market_overview": "시장 전반 분석 3~4문장. 주요 종목 등락률 수치 포함.",
-  "dart_summary": "주요 공시 중 투자자가 주목해야 할 사항 2~3문장.",
-  "semi_summary": "반도체 글로벌 동향 한국어 번역 요약 2~3문장. 수치 포함."
+  "market_overview": "시장 전반 분석 4~5문장. 지수 분위기, 주요 종목 등락률 수치, 핵심 테마 포함.",
+  "stock_analysis": {{
+    "종목명": {{
+      "bull_thesis": "매수 근거 2~3가지. 리포트 제목/의견에서 추론한 구체적 이유. 업황, 실적, 밸류에이션 관점 포함. 수치 최대한 활용.",
+      "bear_thesis": "위험 요인/매도·중립 근거 2~3가지. 리포트가 없으면 해당 업종의 일반적 하방 위험 요인을 제시.",
+      "key_metrics": "주목할 핵심 이슈 한 문장 (예: 실적발표 일정, 업황 사이클, 규제 리스크 등)"
+    }}
+  }},
+  "dart_summary": "공시 주목사항 2~3문장. 기업명·공시 유형 명시. 투자자 관점에서 의미 해석.",
+  "semi_summary": "반도체 글로벌 동향 한국어 번역 3~4문장. 수급·가격·수주 수치 포함. 국내 종목에 미치는 시사점 언급."
 }}
 
 날짜: {date}
-종목 시세 (최대 8개): {json.dumps(prices[:8], ensure_ascii=False)}
-애널리스트 리포트 (최대 5개): {json.dumps(all_reports[:5], ensure_ascii=False)}
-DART 공시 (최대 5개): {json.dumps(disclosures[:5], ensure_ascii=False)}
-반도체 뉴스 (최대 3개): {json.dumps(semi_news[:3], ensure_ascii=False)}
+종목 시세: {json.dumps(prices[:10], ensure_ascii=False)}
+종목별 애널리스트 리포트: {json.dumps(grouped_summary, ensure_ascii=False)}
+DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
+반도체 뉴스: {json.dumps(semi_news[:4], ensure_ascii=False)}
 
-각 섹션에 데이터가 없으면 "데이터를 수집하지 못했습니다." 로 작성하세요.
-반드시 유효한 JSON만 반환하세요."""
+작성 원칙:
+- 매수/매도 양측 의견을 반드시 균형있게 제시하세요
+- 데이터가 없는 섹션은 "해당 데이터 없음" 대신 일반적 시장 맥락을 활용하세요
+- 투자 권유 문구는 사용하지 마세요
+- 반드시 유효한 JSON만 반환하세요"""
 
             response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=1024,
+                model="claude-sonnet-4-6",
+                max_tokens=3000,
                 messages=[{"role": "user", "content": prompt}],
             )
             raw = response.content[0].text.strip()
-            # Strip markdown code fences if present
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
             return json.loads(raw)
