@@ -10,7 +10,7 @@ def test_send_calls_smtp():
         emailer.send(
             recipients=["a@gmail.com", "b@gmail.com"],
             subject="Test Subject",
-            html_body="<html><body>Test</body></html>",
+            text_body="테스트 요약",
         )
     mock_server.starttls.assert_called_once()
     mock_server.login.assert_called_once_with("from@gmail.com", "testpass")
@@ -26,7 +26,7 @@ def test_send_raises_on_auth_failure():
             emailer.send(
                 recipients=["a@gmail.com"],
                 subject="Test",
-                html_body="<html></html>",
+                text_body="요약",
             )
 
 def test_build_subject_includes_date():

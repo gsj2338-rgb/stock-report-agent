@@ -21,14 +21,17 @@ def test_main_runs_without_error():
          patch("main.BrokerCollector") as MockBroker, \
          patch("main.SemiCollector") as MockSemi, \
          patch("main.Composer") as MockComposer, \
-         patch("main.Emailer") as MockEmailer:
+         patch("main.Emailer") as MockEmailer, \
+         patch("main.generate_pdf") as MockPDF:
 
         MockDart.return_value.fetch_disclosures.return_value = []
         MockKis.return_value.fetch_watchlist_prices.return_value = []
         MockNaver.return_value.fetch_analyst_reports.return_value = []
         MockBroker.return_value.fetch_all.return_value = []
         MockSemi.return_value.fetch.return_value = []
-        MockComposer.return_value.compose.return_value = "<html>report</html>"
+        MockComposer.return_value.compose_sections.return_value = {}
+        MockComposer.return_value.compose_summary.return_value = "요약"
+        MockPDF.return_value = b"%PDF-test"
         mock_emailer = MagicMock()
         MockEmailer.return_value = mock_emailer
 

@@ -1,5 +1,7 @@
 import smtplib
 import logging
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -21,13 +23,24 @@ class Emailer:
             return f"[주식 리포트] {parts[0]}년 {int(parts[1])}월 {int(parts[2])}일 — 한국 주식 애널리스트 분석"
         return f"[주식 리포트] {date}"
 
-    def send(self, recipients: list[str], subject: str, html_body: str) -> None:
-        """Send HTML email via Gmail SMTP. Raises on SMTP or auth failure."""
-        msg = MIMEMultipart("alternative")
+    def send(self, recipients: list[str], subject: str, text_body: str,
+             pdf_bytes: bytes | None = None, pdf_filename: str = "report.pdf") -> None:
+        """
+        Send plain-text email with optional PDF attachment via Gmail SMTP.
+        Raises on SMTP or auth failure.
+        """
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
         msg["From"] = self.sender
         msg["To"] = ", ".join(recipients)
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+
+        if pdf_bytes:
+            pdf_part = MIMEBase("application", "pdf")
+            pdf_part.set_payload(pdf_bytes)
+            encoders.encode_base64(pdf_part)
+            pdf_part.add_header("Content-Disposition", f'attachment; filename="{pdf_filename}"')
+            msg.attach(pdf_part)
 
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
             server.ehlo()

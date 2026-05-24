@@ -1,6 +1,7 @@
 import anthropic
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,88 @@ class Composer:
 <p>Claude API 호출 중 오류가 발생했습니다: {e}</p>
 <p>데이터 수집은 완료되었으나 요약 생성에 실패했습니다. API 키와 네트워크를 확인해주세요.</p>
 </body></html>"""
+
+    def compose_summary(self, data: dict) -> str:
+        """Generate a brief plain-text summary for the email body. Falls back to a minimal message on failure."""
+        try:
+            client = anthropic.Anthropic(api_key=self.api_key)
+            date = data.get("date", "날짜 미상")
+            prices = data.get("prices", [])
+            all_reports = data.get("analyst_reports", []) + data.get("broker_reports", [])
+            disclosures = data.get("disclosures", [])
+            semi_news = data.get("semi_news", [])
+
+            prompt = f"""{date} 기준 한국 주식 분석 리포트 요약을 이메일 본문용 짧은 텍스트로 작성해주세요.
+
+형식:
+- 3~5문장 핵심 요약 (불릿 없이 자연스러운 문단)
+- 주요 등락 종목 1~2개 수치와 함께 언급
+- 마지막 문장은 "상세 내용은 첨부된 PDF 리포트를 확인해주세요." 로 마무리
+
+데이터:
+종목 시세: {json.dumps(prices[:6], ensure_ascii=False)}
+애널리스트 리포트: {json.dumps(all_reports[:3], ensure_ascii=False)}
+공시: {json.dumps(disclosures[:3], ensure_ascii=False)}
+반도체 뉴스: {json.dumps(semi_news[:2], ensure_ascii=False)}
+
+200자 이내로 간결하게 작성하세요."""
+
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
+        except Exception as e:
+            logger.error(f"Summary composer error: {e}")
+            date = data.get("date", "")
+            return f"{date} 한국 주식 분석 리포트입니다.\n상세 내용은 첨부된 PDF 리포트를 확인해주세요."
+
+    def compose_sections(self, data: dict) -> dict:
+        """
+        Generate structured AI analysis text for each PDF section.
+        Returns dict with keys: market_overview, dart_summary, semi_summary.
+        Falls back to {} on any failure.
+        """
+        try:
+            client = anthropic.Anthropic(api_key=self.api_key)
+            date = data.get("date", "날짜 미상")
+            prices = data.get("prices", [])
+            all_reports = data.get("analyst_reports", []) + data.get("broker_reports", [])
+            disclosures = data.get("disclosures", [])
+            semi_news = data.get("semi_news", [])
+
+            prompt = f"""다음 데이터를 분석하여 JSON 형식으로 응답해주세요. 마크다운이나 설명 없이 순수 JSON만 반환하세요.
+
+반환 형식:
+{{
+  "market_overview": "시장 전반 분석 3~4문장. 주요 종목 등락률 수치 포함.",
+  "dart_summary": "주요 공시 중 투자자가 주목해야 할 사항 2~3문장.",
+  "semi_summary": "반도체 글로벌 동향 한국어 번역 요약 2~3문장. 수치 포함."
+}}
+
+날짜: {date}
+종목 시세 (최대 8개): {json.dumps(prices[:8], ensure_ascii=False)}
+애널리스트 리포트 (최대 5개): {json.dumps(all_reports[:5], ensure_ascii=False)}
+DART 공시 (최대 5개): {json.dumps(disclosures[:5], ensure_ascii=False)}
+반도체 뉴스 (최대 3개): {json.dumps(semi_news[:3], ensure_ascii=False)}
+
+각 섹션에 데이터가 없으면 "데이터를 수집하지 못했습니다." 로 작성하세요.
+반드시 유효한 JSON만 반환하세요."""
+
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = response.content[0].text.strip()
+            # Strip markdown code fences if present
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            return json.loads(raw)
+        except Exception as e:
+            logger.error(f"compose_sections error: {e}")
+            return {}
 
     def _build_prompt(self, data: dict) -> str:
         date = data.get("date", "날짜 미상")

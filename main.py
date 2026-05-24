@@ -12,6 +12,7 @@ from collectors.broker_collector import BrokerCollector
 from collectors.semi_collector import SemiCollector
 from composer import Composer
 from emailer import Emailer
+from pdf_generator import generate as generate_pdf
 
 load_dotenv()
 
@@ -63,15 +64,28 @@ def run(date: str | None = None) -> None:
         f"{len(semi_news)} semi news items"
     )
 
-    composer = Composer(api_key=os.environ["ANTHROPIC_API_KEY"])
-    html_report = composer.compose({
+    collected_data = {
         "date": display_date,
         "disclosures": disclosures,
         "prices": prices,
         "analyst_reports": analyst_reports,
         "broker_reports": broker_reports,
         "semi_news": semi_news,
-    })
+    }
+
+    composer = Composer(api_key=os.environ["ANTHROPIC_API_KEY"])
+    logger.info("Generating AI analysis sections and text summary...")
+    analysis = composer.compose_sections(collected_data)
+    text_summary = composer.compose_summary(collected_data)
+
+    logger.info("Building PDF report...")
+    pdf_bytes = None
+    pdf_filename = f"stock-report-{display_date}.pdf"
+    try:
+        pdf_bytes = generate_pdf(collected_data, analysis)
+        logger.info(f"PDF generated ({len(pdf_bytes):,} bytes)")
+    except Exception as e:
+        logger.error(f"PDF generation failed, sending without attachment: {e}")
 
     emailer = Emailer(
         sender=os.environ["GMAIL_SENDER"],
@@ -79,7 +93,13 @@ def run(date: str | None = None) -> None:
     )
     recipients = [r.strip() for r in os.environ["REPORT_RECIPIENTS"].split(",")]
     subject = emailer.build_subject(display_date)
-    emailer.send(recipients=recipients, subject=subject, html_body=html_report)
+    emailer.send(
+        recipients=recipients,
+        subject=subject,
+        text_body=text_summary,
+        pdf_bytes=pdf_bytes,
+        pdf_filename=pdf_filename,
+    )
     logger.info("Report sent successfully.")
 
 
