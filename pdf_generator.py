@@ -373,15 +373,24 @@ def _dart_section(data: dict, S: dict, analysis: dict | None) -> list:
 # ---------------------------------------------------------------------------
 # Section 04: 글로벌 반도체 동향
 # ---------------------------------------------------------------------------
+_SEMI_LABEL_STYLE_KEY = "sh_num"   # reuse accent blue for What/Why/Impact labels
+
 def _semi_section(data: dict, S: dict, analysis: dict | None) -> list:
     semi = data.get("semi_news", [])
     story = _section_header("04", "글로벌 반도체 동향", S)
 
-    if analysis and isinstance(analysis.get("semi_summary"), str):
+    semi_ai = analysis.get("semi_analysis") if analysis else None
+
+    # --- AI-generated overview ---
+    if isinstance(semi_ai, dict) and semi_ai.get("overview"):
+        story.append(Paragraph(semi_ai["overview"], S["body"]))
+        story.append(Spacer(1, 3 * mm))
+    elif isinstance(analysis, dict) and isinstance(analysis.get("semi_summary"), str):
+        # backward-compat with old format
         story.append(Paragraph(analysis["semi_summary"], S["body"]))
         story.append(Spacer(1, 3 * mm))
 
-    if not semi:
+    if not semi and not semi_ai:
         story.append(Paragraph("반도체 뉴스 데이터를 수집하지 못했습니다.", S["body"]))
         story.append(Paragraph(
             "수집 오류 원인: TrendForce HTML 구조 변경 가능성, SEMI.org 403/404 응답. "
@@ -390,18 +399,72 @@ def _semi_section(data: dict, S: dict, analysis: dict | None) -> list:
         ))
         return story
 
-    for item in semi:
-        title   = str(item.get("title", ""))
-        source  = str(item.get("source", ""))
-        summary = str(item.get("summary", ""))[:250]
-        block = [
-            Paragraph(f"<b>■ {title}</b>", S["body"]),
-            Paragraph(f"출처: {source}", S["cap"]),
+    # --- Structured news items from AI analysis ---
+    if isinstance(semi_ai, dict) and semi_ai.get("items"):
+        for i, item in enumerate(semi_ai["items"]):
+            headline = str(item.get("headline", ""))
+            what     = str(item.get("what", ""))
+            why      = str(item.get("why", ""))
+            impact   = str(item.get("impact", ""))
+
+            # Find matching raw source for citation
+            source_label = ""
+            if i < len(semi):
+                source_label = semi[i].get("source", "")
+
+            block: list = [
+                Spacer(1, 4 * mm),
+                Paragraph(f"<b>■ {headline}</b>", S["sh_num"]),
+            ]
+            if source_label:
+                block.append(Paragraph(f"출처: {source_label}", S["cap"]))
+            block.append(Spacer(1, 1 * mm))
+
+            if what:
+                block += [
+                    Paragraph("<b>무슨 일:</b>", S["body"]),
+                    Paragraph(what, S["body"]),
+                    Spacer(1, 1 * mm),
+                ]
+            if why:
+                block += [
+                    Paragraph("<b>왜 발생:</b>", S["body"]),
+                    Paragraph(why, S["body"]),
+                    Spacer(1, 1 * mm),
+                ]
+            if impact:
+                block += [
+                    Paragraph("<font color='#2563EB'><b>예상 임팩트:</b></font>", S["body"]),
+                    Paragraph(impact, S["body"]),
+                ]
+
+            story.append(KeepTogether(block))
+
+    else:
+        # Fallback: render raw scraped news items
+        for item in semi:
+            title   = str(item.get("title", ""))
+            source  = str(item.get("source", ""))
+            summary = str(item.get("summary", ""))[:300]
+            block = [
+                Paragraph(f"<b>■ {title}</b>", S["body"]),
+                Paragraph(f"출처: {source}", S["cap"]),
+            ]
+            if summary:
+                block.append(Paragraph(summary, S["body"]))
+            block.append(Spacer(1, 2 * mm))
+            story.append(KeepTogether(block))
+
+    # --- National implications ---
+    if isinstance(semi_ai, dict) and semi_ai.get("kr_implications"):
+        story += [
+            Spacer(1, 5 * mm),
+            HRFlowable(width="100%", thickness=0.5, color=BORDER_CLR),
+            Spacer(1, 2 * mm),
+            Paragraph("<b>국내 반도체 종목 시사점</b>", S["sh_num"]),
+            Spacer(1, 1 * mm),
+            Paragraph(semi_ai["kr_implications"], S["body"]),
         ]
-        if summary:
-            block.append(Paragraph(summary, S["body"]))
-        block.append(Spacer(1, 2 * mm))
-        story.append(KeepTogether(block))
 
     return story
 

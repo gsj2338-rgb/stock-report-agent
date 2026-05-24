@@ -128,14 +128,25 @@ class Composer:
     }}
   }},
   "dart_summary": "공시 주목사항 2~3문장. 기업명·공시 유형 명시. 투자자 관점에서 의미 해석.",
-  "semi_summary": "반도체 글로벌 동향 한국어 번역 3~4문장. 수급·가격·수주 수치 포함. 국내 종목에 미치는 시사점 언급."
+  "semi_analysis": {{
+    "overview": "반도체 시장 전반 동향 2~3문장. 오늘 핵심 흐름 요약.",
+    "items": [
+      {{
+        "headline": "뉴스 제목 (한국어 번역)",
+        "what": "무슨 일이 일어나고 있는가: 구체적 사실과 수치 중심으로 2~3문장.",
+        "why": "왜 발생하고 있는가: 수요/공급/기술/규제 등 배경 원인 2~3문장.",
+        "impact": "예상 임팩트: 규모(금액·%), 시기, 수혜 또는 피해 기업·국가 명시. 2~3문장."
+      }}
+    ],
+    "kr_implications": "국내 반도체 종목 시사점: 삼성전자·SK하이닉스 각각 어떻게 영향받는지 구체적으로 2~3문장."
+  }}
 }}
 
 날짜: {date}
 종목 시세: {json.dumps(prices[:10], ensure_ascii=False)}
 종목별 애널리스트 리포트: {json.dumps(grouped_summary, ensure_ascii=False)}
 DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
-반도체 뉴스: {json.dumps(semi_news[:4], ensure_ascii=False)}
+반도체 뉴스 (전문 번역 필수): {json.dumps(semi_news[:6], ensure_ascii=False)}
 
 작성 원칙:
 - 매수/매도 양측 의견을 반드시 균형있게 제시하세요
@@ -145,7 +156,7 @@ DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
 
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=3000,
+                max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
             raw = response.content[0].text.strip()
