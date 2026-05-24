@@ -38,7 +38,6 @@ class DartCollector:
                 "bgn_de": date,
                 "end_de": date,
                 "last_reprt_at": "N",
-                "pblntf_ty": "A",
                 "page_no": "1",
                 "page_count": "40",
             }

@@ -80,92 +80,110 @@ class Composer:
 
     def compose_sections(self, data: dict) -> dict:
         """
-        Generate deep structured AI analysis for the PDF report.
+        Generate deep structured AI analysis for the PDF report using two focused API calls
+        to avoid JSON truncation:
+          Call 1 — market_overview, stock_analysis, dart_summary
+          Call 2 — semi_analysis (what/why/impact per item + kr_implications)
 
-        Returns dict with keys:
-          market_overview  — narrative paragraph for section 01
-          stock_analysis   — dict keyed by stock_name:
-                             {bull_thesis, bear_thesis, key_metrics}
-          dart_summary     — narrative for section 03
-          semi_summary     — Korean-translated narrative for section 04
-
-        Falls back to {} on any failure.
+        Returns merged dict. Falls back gracefully per call.
         """
-        try:
-            client = anthropic.Anthropic(api_key=self.api_key)
-            date = data.get("date", "날짜 미상")
-            prices = data.get("prices", [])
-            all_reports = data.get("analyst_reports", []) + data.get("broker_reports", [])
-            disclosures = data.get("disclosures", [])
-            semi_news = data.get("semi_news", [])
+        client = anthropic.Anthropic(api_key=self.api_key)
+        date = data.get("date", "날짜 미상")
+        prices = data.get("prices", [])
+        all_reports = data.get("analyst_reports", []) + data.get("broker_reports", [])
+        disclosures = data.get("disclosures", [])
+        semi_news   = data.get("semi_news", [])
 
-            # Group reports by stock for per-stock analysis
-            grouped: dict[str, list] = {}
-            for r in all_reports:
-                name = r.get("stock_name", "기타")
-                grouped.setdefault(name, []).append(r)
+        grouped: dict[str, list] = {}
+        for r in all_reports:
+            grouped.setdefault(r.get("stock_name", "기타"), []).append(r)
+        grouped_summary = {
+            name: [{"broker": r.get("broker", ""), "opinion": r.get("opinion", ""),
+                    "target_price": r.get("target_price", ""), "title": r.get("title", "")}
+                   for r in reps]
+            for name, reps in grouped.items()
+        }
 
-            grouped_summary = {
-                name: [
-                    {"broker": r.get("broker", ""), "opinion": r.get("opinion", ""),
-                     "target_price": r.get("target_price", ""), "title": r.get("title", "")}
-                    for r in reports
-                ]
-                for name, reports in grouped.items()
-            }
+        result: dict = {}
 
-            prompt = f"""한국 주식 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
-마크다운 코드블록 없이 순수 JSON만 반환하세요.
+        # ── Call 1: market / stock / dart ──────────────────────────────────
+        prompt1 = f"""한국 주식 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
+마크다운 없이 순수 JSON만 반환하세요. 각 텍스트 필드는 250자 이내.
 
-반환 형식 (반드시 이 키 구조를 따르세요):
 {{
-  "market_overview": "시장 전반 분석 4~5문장. 지수 분위기, 주요 종목 등락률 수치, 핵심 테마 포함.",
+  "market_overview": "시장 전반 4~5문장. 지수 분위기·주요 종목 등락률 수치·핵심 테마 포함.",
   "stock_analysis": {{
     "종목명": {{
-      "bull_thesis": "매수 근거 2~3가지. 리포트 제목/의견에서 추론한 구체적 이유. 업황, 실적, 밸류에이션 관점 포함. 수치 최대한 활용.",
-      "bear_thesis": "위험 요인/매도·중립 근거 2~3가지. 리포트가 없으면 해당 업종의 일반적 하방 위험 요인을 제시.",
-      "key_metrics": "주목할 핵심 이슈 한 문장 (예: 실적발표 일정, 업황 사이클, 규제 리스크 등)"
+      "bull_thesis": "매수 근거 2~3가지. 리포트 제목에서 추론. 업황·실적·밸류에이션 수치 포함.",
+      "bear_thesis": "위험 요인·매도 근거 2~3가지. 리포트 없으면 업종 하방 위험 제시.",
+      "key_metrics": "핵심 이슈 한 문장 (실적일정·사이클·규제 등)."
     }}
   }},
-  "dart_summary": "공시 주목사항 2~3문장. 기업명·공시 유형 명시. 투자자 관점에서 의미 해석.",
+  "dart_summary": "공시 주목사항 2~3문장. 기업명·유형 명시. 투자자 관점 해석."
+}}
+
+날짜: {date}
+종목 시세: {json.dumps(prices[:12], ensure_ascii=False)}
+종목별 리포트: {json.dumps(grouped_summary, ensure_ascii=False)}
+DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
+
+- 매수/매도 양측 균형 필수
+- 데이터 없으면 일반 시장 맥락으로 채우세요
+- 투자 권유 문구 금지
+- 반드시 유효한 JSON만 반환"""
+
+        try:
+            r1 = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt1}],
+            )
+            raw1 = re.sub(r"^```(?:json)?\s*", "", r1.content[0].text.strip())
+            raw1 = re.sub(r"\s*```$", "", raw1)
+            result.update(json.loads(raw1))
+        except Exception as e:
+            logger.error(f"compose_sections call-1 error: {e}")
+
+        # ── Call 2: semiconductor analysis ─────────────────────────────────
+        prompt2 = f"""글로벌 반도체 전문 애널리스트로서 다음 뉴스를 분석하여 JSON으로 응답하세요.
+마크다운 없이 순수 JSON만 반환하세요. 각 텍스트 필드는 300자 이내.
+
+{{
   "semi_analysis": {{
-    "overview": "반도체 시장 전반 동향 2~3문장. 오늘 핵심 흐름 요약.",
+    "overview": "반도체 시장 전반 동향 2~3문장.",
     "items": [
       {{
         "headline": "뉴스 제목 (한국어 번역)",
-        "what": "무슨 일이 일어나고 있는가: 구체적 사실과 수치 중심으로 2~3문장.",
-        "why": "왜 발생하고 있는가: 수요/공급/기술/규제 등 배경 원인 2~3문장.",
-        "impact": "예상 임팩트: 규모(금액·%), 시기, 수혜 또는 피해 기업·국가 명시. 2~3문장."
+        "what": "무슨 일: 구체적 사실·수치 중심 2~3문장.",
+        "why": "왜 발생: 수요/공급/기술/규제 원인 2~3문장.",
+        "impact": "예상 임팩트: 규모(금액·%)·시기·수혜/피해 기업 명시. 2~3문장."
       }}
     ],
-    "kr_implications": "국내 반도체 종목 시사점: 삼성전자·SK하이닉스 각각 어떻게 영향받는지 구체적으로 2~3문장."
+    "kr_implications": "국내 시사점: 삼성전자·SK하이닉스 각각 영향 구체적으로 2~3문장."
   }}
 }}
 
 날짜: {date}
-종목 시세: {json.dumps(prices[:10], ensure_ascii=False)}
-종목별 애널리스트 리포트: {json.dumps(grouped_summary, ensure_ascii=False)}
-DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
-반도체 뉴스 (전문 번역 필수): {json.dumps(semi_news[:6], ensure_ascii=False)}
+반도체 뉴스: {json.dumps(semi_news[:6], ensure_ascii=False)}
 
-작성 원칙:
-- 매수/매도 양측 의견을 반드시 균형있게 제시하세요
-- 데이터가 없는 섹션은 "해당 데이터 없음" 대신 일반적 시장 맥락을 활용하세요
-- 투자 권유 문구는 사용하지 마세요
-- 반드시 유효한 JSON만 반환하세요"""
+- 뉴스가 없으면 {date} 기준 최근 글로벌 반도체 주요 동향을 지식 기반으로 작성하세요
+- 수치(%, 달러, 웨이퍼 수 등) 최대한 포함
+- 투자 권유 문구 금지
+- 반드시 유효한 JSON만 반환"""
 
-            response = client.messages.create(
+        try:
+            r2 = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt2}],
             )
-            raw = response.content[0].text.strip()
-            raw = re.sub(r"^```(?:json)?\s*", "", raw)
-            raw = re.sub(r"\s*```$", "", raw)
-            return json.loads(raw)
+            raw2 = re.sub(r"^```(?:json)?\s*", "", r2.content[0].text.strip())
+            raw2 = re.sub(r"\s*```$", "", raw2)
+            result.update(json.loads(raw2))
         except Exception as e:
-            logger.error(f"compose_sections error: {e}")
-            return {}
+            logger.error(f"compose_sections call-2 error: {e}")
+
+        return result
 
     def _build_prompt(self, data: dict) -> str:
         date = data.get("date", "날짜 미상")
