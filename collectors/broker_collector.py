@@ -18,7 +18,8 @@ def _is_bio(name: str) -> bool:
 
 class BrokerCollector:
     def __init__(self):
-        self.brokers = ["삼성증권", "미래에셋", "KB증권", "키움증권", "NH투자증권"]
+        # 삼성증권 (404), NH투자증권 (JS-rendered SPA, no stable URL) removed until fixed
+        self.brokers = ["미래에셋", "KB증권", "키움증권"]
 
     def _fetch_broker(self, broker_name: str, date: str) -> list[dict]:
         parsers = {

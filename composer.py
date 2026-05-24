@@ -107,19 +107,27 @@ class Composer:
         result: dict = {}
 
         # ── Call 1: market / stock / dart ──────────────────────────────────
-        prompt1 = f"""한국 주식 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
-마크다운 없이 순수 JSON만 반환하세요. 각 텍스트 필드는 250자 이내.
+        has_reports = bool(grouped_summary)
+        stock_instruction = (
+            "리포트가 있는 종목만 포함. 각 종목 필드는 220자 이내 엄격 준수."
+            if has_reports else
+            "리포트 없음 → 빈 객체 {} 반환."
+        )
 
+        prompt1 = f"""한국 주식 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
+순수 JSON만 반환하세요. 코드블록(```) 금지.
+
+반환 형식:
 {{
-  "market_overview": "시장 전반 4~5문장. 지수 분위기·주요 종목 등락률 수치·핵심 테마 포함.",
+  "market_overview": "시장 전반 3~4문장. 주요 등락 종목 수치 포함. 220자 이내.",
   "stock_analysis": {{
     "종목명": {{
-      "bull_thesis": "매수 근거 2~3가지. 리포트 제목에서 추론. 업황·실적·밸류에이션 수치 포함.",
-      "bear_thesis": "위험 요인·매도 근거 2~3가지. 리포트 없으면 업종 하방 위험 제시.",
-      "key_metrics": "핵심 이슈 한 문장 (실적일정·사이클·규제 등)."
+      "bull_thesis": "매수 근거 2가지. 리포트 제목 기반. 수치 포함. 220자 이내.",
+      "bear_thesis": "위험 요인 2가지. 220자 이내.",
+      "key_metrics": "핵심 이슈 한 문장."
     }}
   }},
-  "dart_summary": "공시 주목사항 2~3문장. 기업명·유형 명시. 투자자 관점 해석."
+  "dart_summary": "공시 주목사항 2문장. 없으면 '해당일 주요 공시 없음.' 220자 이내."
 }}
 
 날짜: {date}
@@ -127,10 +135,11 @@ class Composer:
 종목별 리포트: {json.dumps(grouped_summary, ensure_ascii=False)}
 DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
 
-- 매수/매도 양측 균형 필수
-- 데이터 없으면 일반 시장 맥락으로 채우세요
+규칙:
+- stock_analysis: {stock_instruction}
+- 매수/매도 양측 균형
 - 투자 권유 문구 금지
-- 반드시 유효한 JSON만 반환"""
+- 유효한 JSON만 반환"""
 
         try:
             r1 = client.messages.create(
@@ -145,31 +154,40 @@ DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
             logger.error(f"compose_sections call-1 error: {e}")
 
         # ── Call 2: semiconductor analysis ─────────────────────────────────
-        prompt2 = f"""글로벌 반도체 전문 애널리스트로서 다음 뉴스를 분석하여 JSON으로 응답하세요.
-마크다운 없이 순수 JSON만 반환하세요. 각 텍스트 필드는 300자 이내.
+        n_semi = len(semi_news)
+        semi_item_count = min(n_semi, 4) if n_semi > 0 else 2  # max 2 from knowledge when no data
+        semi_instruction = (
+            f"수집된 뉴스 {n_semi}건 분석. 최대 {semi_item_count}개 항목."
+            if n_semi > 0 else
+            f"수집된 뉴스 없음. {date} 기준 글로벌 반도체 핵심 이슈 2개만 지식 기반으로 작성."
+        )
 
+        prompt2 = f"""글로벌 반도체 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
+순수 JSON만 반환하세요. 코드블록(```) 금지.
+
+반환 형식:
 {{
   "semi_analysis": {{
-    "overview": "반도체 시장 전반 동향 2~3문장.",
+    "overview": "반도체 시장 전반 동향 2문장. 200자 이내.",
     "items": [
       {{
         "headline": "뉴스 제목 (한국어 번역)",
-        "what": "무슨 일: 구체적 사실·수치 중심 2~3문장.",
-        "why": "왜 발생: 수요/공급/기술/규제 원인 2~3문장.",
-        "impact": "예상 임팩트: 규모(금액·%)·시기·수혜/피해 기업 명시. 2~3문장."
+        "what": "무슨 일: 사실·수치 중심 2문장. 250자 이내.",
+        "why": "왜 발생: 원인 2문장. 250자 이내.",
+        "impact": "예상 임팩트: 규모·시기·수혜기업 명시. 2문장. 250자 이내."
       }}
     ],
-    "kr_implications": "국내 시사점: 삼성전자·SK하이닉스 각각 영향 구체적으로 2~3문장."
+    "kr_implications": "국내 시사점: 삼성전자·SK하이닉스 각각 2~3문장. 250자 이내."
   }}
 }}
 
 날짜: {date}
 반도체 뉴스: {json.dumps(semi_news[:6], ensure_ascii=False)}
 
-- 뉴스가 없으면 {date} 기준 최근 글로벌 반도체 주요 동향을 지식 기반으로 작성하세요
+- {semi_instruction}
 - 수치(%, 달러, 웨이퍼 수 등) 최대한 포함
 - 투자 권유 문구 금지
-- 반드시 유효한 JSON만 반환"""
+- 유효한 JSON만 반환"""
 
         try:
             r2 = client.messages.create(
