@@ -2,12 +2,11 @@ name: Daily Stock Report
 
 on:
   schedule:
-    # 07:00 KST = 22:00 UTC (previous day)
-    - cron: "0 22 * * 0-4"   # Sun–Thu UTC = Mon–Fri 07:00 KST
-  workflow_dispatch:          # allow manual trigger from GitHub UI
+    - cron: "0 22 * * 0-4"   # Mon–Fri 07:00 KST
+  workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # suppress Node.js 20 deprecation warnings
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   send-report:
@@ -15,34 +14,55 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install system packages (lxml needs libxml2)
-        run: sudo apt-get install -y libxml2-dev libxslt-dev
+      - name: Install dependencies
+        run: |
+          sudo apt-get install -y libxml2-dev libxslt-dev
+          pip install -r requirements.txt
 
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt
+      - name: Diagnose — Python version and imports
+        run: |
+          python --version
+          python -c "
+          import sys
+          try:
+              import anthropic, requests, bs4, lxml, dotenv, reportlab
+              print('OK: all imports succeeded')
+          except ImportError as e:
+              print(f'::error::Import failed: {e}')
+              sys.exit(1)
+          "
 
-      - name: Verify secrets are present
+      - name: Diagnose — check secrets
         env:
           DART_API_KEY:      ${{ secrets.DART_API_KEY }}
           KIS_APP_KEY:       ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:    ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:    ${{ secrets.KIS_ACCOUNT_NO }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_SENDER:      ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENTS: ${{ secrets.REPORT_RECIPIENTS }}
         run: |
-          missing=0
-          [ -z "$DART_API_KEY" ]       && echo "ERROR: DART_API_KEY secret not set"       && missing=1
-          [ -z "$KIS_APP_KEY" ]        && echo "ERROR: KIS_APP_KEY secret not set"        && missing=1
-          [ -z "$ANTHROPIC_API_KEY" ]  && echo "ERROR: ANTHROPIC_API_KEY secret not set"  && missing=1
-          [ -z "$GMAIL_APP_PASSWORD" ] && echo "ERROR: GMAIL_APP_PASSWORD secret not set" && missing=1
-          [ $missing -eq 1 ] && exit 1 || echo "All required secrets present."
+          python -c "
+          import os, sys
+          required = [
+              'DART_API_KEY','KIS_APP_KEY','KIS_APP_SECRET','KIS_ACCOUNT_NO',
+              'ANTHROPIC_API_KEY','GMAIL_SENDER','GMAIL_APP_PASSWORD','REPORT_RECIPIENTS',
+          ]
+          missing = [k for k in required if not os.environ.get(k)]
+          if missing:
+              for k in missing:
+                  print(f'::error::Secret not set: {k}')
+              sys.exit(1)
+          print('OK: all secrets present')
+          "
 
       - name: Run stock report agent
         env:
@@ -56,12 +76,12 @@ jobs:
           GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENTS:        ${{ secrets.REPORT_RECIPIENTS }}
         run: |
-          python main.py 2>&1 || {
-            echo "::error::main.py failed — see log above for full traceback"
+          python -u main.py 2>&1 || {
+            echo "::error::main.py exited with error — see step log above"
             exit 1
           }
 
-      - name: Upload PDF artifact (for debugging)
+      - name: Upload PDF artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
