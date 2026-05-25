@@ -55,7 +55,7 @@ jobs:
           GMAIL_SENDER:             ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENTS:        ${{ secrets.REPORT_RECIPIENTS }}
-        run: python main.py
+        run: python main.py 2>&1
 
       - name: Upload PDF artifact (for debugging)
         if: always()

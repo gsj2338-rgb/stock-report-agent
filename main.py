@@ -93,7 +93,18 @@ def resolve_date(date_str: str | None) -> str:
     return today.strftime("%Y%m%d")
 
 
+def _check_env() -> None:
+    required = [
+        "DART_API_KEY", "KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO",
+        "ANTHROPIC_API_KEY", "GMAIL_SENDER", "GMAIL_APP_PASSWORD", "REPORT_RECIPIENTS",
+    ]
+    missing = [k for k in required if not os.environ.get(k)]
+    if missing:
+        raise EnvironmentError(f"Missing required environment variables: {', '.join(missing)}")
+
+
 def run(date: str | None = None) -> None:
+    _check_env()
     report_date = resolve_date(date)
     display_date = f"{report_date[:4]}-{report_date[4:6]}-{report_date[6:]}"
     logger.info(f"Generating report for {display_date}")
