@@ -6,6 +6,9 @@ on:
     - cron: "0 22 * * 0-4"   # Sun–Thu UTC = Mon–Fri 07:00 KST
   workflow_dispatch:          # allow manual trigger from GitHub UI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # suppress Node.js 20 deprecation warnings
+
 jobs:
   send-report:
     runs-on: ubuntu-latest
@@ -21,8 +24,25 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install system packages (lxml needs libxml2)
+        run: sudo apt-get install -y libxml2-dev libxslt-dev
+
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
+
+      - name: Verify secrets are present
+        env:
+          DART_API_KEY:      ${{ secrets.DART_API_KEY }}
+          KIS_APP_KEY:       ${{ secrets.KIS_APP_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          missing=0
+          [ -z "$DART_API_KEY" ]       && echo "ERROR: DART_API_KEY secret not set"       && missing=1
+          [ -z "$KIS_APP_KEY" ]        && echo "ERROR: KIS_APP_KEY secret not set"        && missing=1
+          [ -z "$ANTHROPIC_API_KEY" ]  && echo "ERROR: ANTHROPIC_API_KEY secret not set"  && missing=1
+          [ -z "$GMAIL_APP_PASSWORD" ] && echo "ERROR: GMAIL_APP_PASSWORD secret not set" && missing=1
+          [ $missing -eq 1 ] && exit 1 || echo "All required secrets present."
 
       - name: Run stock report agent
         env:
