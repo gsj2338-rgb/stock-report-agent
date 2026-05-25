@@ -97,22 +97,37 @@ class Composer:
         grouped: dict[str, list] = {}
         for r in all_reports:
             grouped.setdefault(r.get("stock_name", "기타"), []).append(r)
+        all_stock_names = list(grouped.keys())  # all companies, for company_descs
+        # Limit to top 8 stocks by report count for detailed analysis (token budget)
+        top_stocks = sorted(grouped.items(), key=lambda kv: len(kv[1]), reverse=True)[:8]
         grouped_summary = {
             name: [{"broker": r.get("broker", ""), "opinion": r.get("opinion", ""),
-                    "target_price": r.get("target_price", ""), "title": r.get("title", "")}
+                    "target_price": r.get("target_price", ""), "title": r.get("title", ""),
+                    "summary": r.get("summary", "")[:200]}
                    for r in reps]
-            for name, reps in grouped.items()
+            for name, reps in top_stocks
         }
 
         result: dict = {}
 
         # ── Call 1: market / stock / dart ──────────────────────────────────
         has_reports = bool(grouped_summary)
-        stock_instruction = (
-            "리포트가 있는 종목만 포함. 각 종목 필드는 220자 이내 엄격 준수."
-            if has_reports else
-            "리포트 없음 → 빈 객체 {} 반환."
-        )
+        # Top movers by abs change_pct for fallback analysis
+        top_movers = sorted(prices, key=lambda p: abs(float(p.get("change_pct", 0))), reverse=True)[:5]
+        top_mover_names = [p.get("name") or p.get("code", "") for p in top_movers]
+
+        if has_reports:
+            stock_instruction = (
+                f"위 {len(grouped_summary)}개 종목만 포함. "
+                "리포트 summary 필드를 bull_thesis/bear_thesis 근거로 최대한 활용하세요. "
+                "company_desc·key_metrics 60자, bull/bear_thesis 150자 이내 엄격 준수."
+            )
+        else:
+            stock_instruction = (
+                f"리포트 없음. 대신 다음 상위 등락 종목 {len(top_mover_names)}개에 대해 "
+                f"시세 데이터만으로 간략한 분석 제공: {top_mover_names}. "
+                "company_desc 포함. 각 종목 필드 150자 이내. 투기적 의견 금지."
+            )
 
         prompt1 = f"""한국 주식 전문 애널리스트로서 다음 데이터를 분석하여 JSON으로 응답하세요.
 순수 JSON만 반환하세요. 코드블록(```) 금지.
@@ -120,11 +135,14 @@ class Composer:
 반환 형식:
 {{
   "market_overview": "시장 전반 3~4문장. 주요 등락 종목 수치 포함. 220자 이내.",
+  "company_descs": {{
+    "종목명": "주요 사업·섹터 한 줄 (예: '삼성전기 — MLCC·카메라모듈, IT부품섹터'). 60자 이내."
+  }},
   "stock_analysis": {{
     "종목명": {{
-      "bull_thesis": "매수 근거 2가지. 리포트 제목 기반. 수치 포함. 220자 이내.",
-      "bear_thesis": "위험 요인 2가지. 220자 이내.",
-      "key_metrics": "핵심 이슈 한 문장."
+      "bull_thesis": "매수/상승 근거 2가지. 리포트 내용 기반. 수치 포함. 150자 이내.",
+      "bear_thesis": "위험 요인·하락 근거 2가지. 150자 이내.",
+      "key_metrics": "핵심 이슈 한 문장. 60자 이내."
     }}
   }},
   "dart_summary": "공시 주목사항 2문장. 없으면 '해당일 주요 공시 없음.' 220자 이내."
@@ -132,10 +150,11 @@ class Composer:
 
 날짜: {date}
 종목 시세: {json.dumps(prices[:12], ensure_ascii=False)}
-종목별 리포트: {json.dumps(grouped_summary, ensure_ascii=False)}
+종목별 리포트 (상세분석 대상): {json.dumps(grouped_summary, ensure_ascii=False)}
 DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
 
 규칙:
+- company_descs: 다음 종목 전체에 대해 작성: {json.dumps(all_stock_names, ensure_ascii=False)}. 종목당 60자 이내.
 - stock_analysis: {stock_instruction}
 - 매수/매도 양측 균형
 - 투자 권유 문구 금지
@@ -144,7 +163,7 @@ DART 공시: {json.dumps(disclosures[:8], ensure_ascii=False)}
         try:
             r1 = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=2048,
+                max_tokens=4096,
                 messages=[{"role": "user", "content": prompt1}],
             )
             raw1 = re.sub(r"^```(?:json)?\s*", "", r1.content[0].text.strip())

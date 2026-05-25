@@ -6,6 +6,27 @@ logger = logging.getLogger(__name__)
 
 KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
 
+# Static fallback names for when KIS API returns empty hts_kor_isnm (e.g., weekend/after-hours)
+STOCK_NAMES: dict[str, str] = {
+    "005930": "삼성전자",
+    "000660": "SK하이닉스",
+    "035720": "카카오",
+    "035420": "NAVER",
+    "005380": "현대차",
+    "000270": "기아",
+    "105560": "KB금융",
+    "055550": "신한지주",
+    "086790": "하나금융지주",
+    "010950": "S-Oil",
+    "267250": "한화오션",
+    "051900": "LG생활건강",
+    "090430": "아모레퍼시픽",
+    "017670": "SK텔레콤",
+    "030200": "KT",
+    "005490": "POSCO홀딩스",
+    "004020": "현대제철",
+}
+
 WATCHLIST = {
     "반도체": ["005930", "000660"],
     "IT/플랫폼": ["035720", "035420"],
@@ -59,7 +80,7 @@ class KisCollector:
             out = resp.json().get("output", {})
             return {
                 "code": code,
-                "name": out.get("hts_kor_isnm", ""),
+                "name": out.get("hts_kor_isnm", "") or STOCK_NAMES.get(code, code),
                 "close": int(out.get("stck_prpr", 0)),
                 "change_pct": float(out.get("prdy_ctrt", 0)),
                 "volume": int(out.get("acml_vol", 0)),

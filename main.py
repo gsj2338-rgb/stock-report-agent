@@ -1,7 +1,7 @@
 import argparse
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
@@ -78,11 +78,14 @@ def _build_email_body(collected_data: dict, narrative: str) -> str:
     return "\n".join(lines)
 
 
+KST = timezone(timedelta(hours=9))
+
+
 def resolve_date(date_str: str | None) -> str:
-    """Return YYYYMMDD. If None, use today. If today is weekend, use last Friday."""
+    """Return YYYYMMDD (KST). If None, use today KST. If weekend, use last Friday."""
     if date_str:
         return date_str.replace("-", "")
-    today = date.today()
+    today = datetime.now(KST).date()
     if today.weekday() == 5:   # Saturday
         today -= timedelta(days=1)
     elif today.weekday() == 6:  # Sunday

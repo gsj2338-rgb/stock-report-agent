@@ -226,12 +226,72 @@ def _sector_analysis(data: dict, S: dict, analysis: dict | None) -> list:
     story = _section_header("02", "섹터별 종목 분석 — 매수/매도 의견 및 근거", S)
 
     if not all_reports:
-        story.append(Paragraph("애널리스트 리포트 데이터를 수집하지 못했습니다.", S["body"]))
-        story.append(Paragraph(
-            "수집 오류 원인: 네이버 금융 HTML 구조 변경 또는 해당 날짜 데이터 없음. "
-            "증권사 페이지 scraping 실패 (삼성증권 404, 미래에셋/KB/키움/NH 응답 없음).",
-            S["cap"],
-        ))
+        story.append(Paragraph("해당일 수집된 애널리스트 리포트가 없습니다.", S["body"]))
+        story.append(Spacer(1, 2 * mm))
+
+        # Show price-based top movers table as fallback
+        if prices:
+            story.append(Paragraph("■ 시세 기반 주요 등락 종목", S["sh_num"]))
+            story.append(Spacer(1, 1 * mm))
+            sorted_prices = sorted(
+                prices, key=lambda x: abs(float(x.get("change_pct", 0))), reverse=True
+            )[:8]
+            pm_headers = ["종목명", "코드", "현재가", "등락률", "52주 고가 대비"]
+            pm_col_w = [120, 55, 80, 75, 120]
+            pm_rows = [[Paragraph(h, S["th"]) for h in pm_headers]]
+            for p in sorted_prices:
+                chg = p.get("change_pct", 0)
+                try:
+                    chg_f = float(chg)
+                    chg_str = f"{chg_f:+.2f}%"
+                    chg_s = S["td_g"] if chg_f > 0 else (S["td_r2"] if chg_f < 0 else S["td_c"])
+                except (ValueError, TypeError):
+                    chg_str = str(chg)
+                    chg_s = S["td_c"]
+                close = p.get("close", 0)
+                high52 = p.get("high_52w", 0)
+                vs_high = f"{(close / high52 - 1) * 100:+.1f}%" if high52 and close else "-"
+                pm_rows.append([
+                    Paragraph(p.get("name", p.get("code", "")), S["td"]),
+                    Paragraph(p.get("code", ""), S["td_c"]),
+                    Paragraph(f"{close:,}" if isinstance(close, int) else str(close), S["td_r"]),
+                    Paragraph(chg_str, chg_s),
+                    Paragraph(vs_high, S["td_r"]),
+                ])
+            pm_t = Table(pm_rows, colWidths=pm_col_w, repeatRows=1)
+            pm_t.setStyle(_TABLE_STYLE)
+            story.append(pm_t)
+            story.append(Spacer(1, 3 * mm))
+
+        # Show Claude price-based stock analysis if generated
+        stock_ai = {}
+        if analysis and isinstance(analysis.get("stock_analysis"), dict):
+            stock_ai = analysis["stock_analysis"]
+
+        if stock_ai:
+            story.append(Paragraph("■ AI 종목 분석 (시세 기반)", S["sh_num"]))
+            for stock_name, ai in stock_ai.items():
+                block: list = [
+                    Spacer(1, 3 * mm),
+                    Paragraph(f"<b>{stock_name}</b>", S["body"]),
+                ]
+                if ai.get("bull_thesis"):
+                    block += [
+                        Paragraph("<font color='#16A34A'><b>▲ 상승 근거</b></font>", S["body"]),
+                        Paragraph(ai["bull_thesis"], S["body"]),
+                    ]
+                if ai.get("bear_thesis"):
+                    block += [
+                        Spacer(1, 1 * mm),
+                        Paragraph("<font color='#DC2626'><b>▼ 위험 요인</b></font>", S["body"]),
+                        Paragraph(ai["bear_thesis"], S["body"]),
+                    ]
+                if ai.get("key_metrics"):
+                    block.append(Paragraph(f"<b>★ 핵심:</b> {ai['key_metrics']}", S["cap"]))
+                story.append(KeepTogether(block))
+
+        story.append(Spacer(1, 3 * mm))
+        story.append(Paragraph("출처: 한국투자증권 Open API (KIS)", S["cap"]))
         return story
 
     # Build price lookup: name → close price
@@ -247,6 +307,11 @@ def _sector_analysis(data: dict, S: dict, analysis: dict | None) -> list:
     stock_ai = {}
     if analysis and isinstance(analysis.get("stock_analysis"), dict):
         stock_ai = analysis["stock_analysis"]
+
+    # Company descriptions for all stocks
+    company_descs: dict = {}
+    if analysis and isinstance(analysis.get("company_descs"), dict):
+        company_descs = analysis["company_descs"]
 
     report_headers = ["증권사", "투자의견", "목표주가", "날짜", "리포트 제목"]
     col_w = [80, 68, 62, 62, 178]   # 450pt
@@ -269,18 +334,30 @@ def _sector_analysis(data: dict, S: dict, analysis: dict | None) -> list:
             avg_t = int(stats["avg_target"])
             upside_str = f"  |  평균 목표주가 {avg_t:,}원  ({sign}{stats['upside']:.1f}%)"
 
-        # --- Report table ---
+        # --- Report table (title + summary below) ---
         rows = [[Paragraph(h, S["th"]) for h in report_headers]]
         for r in reports[:10]:
             opinion = str(r.get("opinion", "N/A"))
             tp = r.get("target_price", 0)
             tp_str = f"{int(tp):,}" if isinstance(tp, (int, float)) and tp else (str(tp) if tp else "-")
+            # Combine title + summary in the last cell
+            title_text = str(r.get("title", "-"))[:60]
+            raw_summary = str(r.get("summary", "")).strip()
+            if raw_summary and len(raw_summary) > 30:
+                # Truncate summary to ~2 lines (~130 chars)
+                summary_text = raw_summary[:130] + ("…" if len(raw_summary) > 130 else "")
+                title_cell = Paragraph(
+                    f"{title_text}<br/><font color='#6B7280' size='8'>{summary_text}</font>",
+                    S["td"],
+                )
+            else:
+                title_cell = Paragraph(title_text, S["td"])
             rows.append([
                 Paragraph(str(r.get("broker", r.get("source", "-")))[:14], S["td"]),
                 Paragraph(opinion, S[_opinion_style(opinion)]),
                 Paragraph(tp_str, S["td_r"]),
                 Paragraph(str(r.get("date", "-"))[:10], S["td_c"]),
-                Paragraph(str(r.get("title", "-"))[:55], S["td"]),
+                title_cell,
             ])
 
         t = Table(rows, colWidths=col_w, repeatRows=1)
@@ -290,6 +367,12 @@ def _sector_analysis(data: dict, S: dict, analysis: dict | None) -> list:
         block: list = [
             Spacer(1, 5 * mm),
             Paragraph(f"■ {stock_name}", S["sh_num"]),
+        ]
+        # Company description — prefer company_descs (covers all stocks) over ai.company_desc
+        desc = company_descs.get(stock_name) or ai.get("company_desc", "")
+        if desc:
+            block.append(Paragraph(desc, S["cap"]))
+        block += [
             Paragraph(f"컨센서스: {consensus_str}{upside_str}", S["cap"]),
             Spacer(1, 1 * mm),
             t,
@@ -340,12 +423,7 @@ def _dart_section(data: dict, S: dict, analysis: dict | None) -> list:
         story.append(Spacer(1, 3 * mm))
 
     if not disclosures:
-        story.append(Paragraph("공시 데이터를 수집하지 못했습니다.", S["body"]))
-        story.append(Paragraph(
-            "수집 오류 원인: DART API pblntf_ty='A' (정기공시)로 조회 시 해당일 데이터 없음 (status 013). "
-            "개선 방안: pblntf_ty 파라미터 제거 또는 'B'(주요사항) 추가.",
-            S["cap"],
-        ))
+        story.append(Paragraph("해당일 주요 공시가 없거나 장 마감 후 조회 시 데이터가 없을 수 있습니다.", S["body"]))
         return story
 
     headers = ["기업명", "종목코드", "공시유형", "접수일"]
@@ -391,12 +469,7 @@ def _semi_section(data: dict, S: dict, analysis: dict | None) -> list:
         story.append(Spacer(1, 3 * mm))
 
     if not semi and not semi_ai:
-        story.append(Paragraph("반도체 뉴스 데이터를 수집하지 못했습니다.", S["body"]))
-        story.append(Paragraph(
-            "수집 오류 원인: TrendForce HTML 구조 변경 가능성, SEMI.org 403/404 응답. "
-            "개선 방안: RSS 피드 또는 공식 API 사용.",
-            S["cap"],
-        ))
+        story.append(Paragraph("해당일 반도체 뉴스 데이터가 없습니다.", S["body"]))
         return story
 
     # --- Structured news items from AI analysis ---

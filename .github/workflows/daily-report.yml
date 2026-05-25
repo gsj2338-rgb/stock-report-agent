@@ -1,0 +1,47 @@
+name: Daily Stock Report
+
+on:
+  schedule:
+    # 07:00 KST = 22:00 UTC (previous day)
+    - cron: "0 22 * * 0-4"   # Sun–Thu UTC = Mon–Fri 07:00 KST
+  workflow_dispatch:          # allow manual trigger from GitHub UI
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run stock report agent
+        env:
+          DART_API_KEY:             ${{ secrets.DART_API_KEY }}
+          KIS_APP_KEY:              ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET:           ${{ secrets.KIS_APP_SECRET }}
+          KIS_ACCOUNT_NO:           ${{ secrets.KIS_ACCOUNT_NO }}
+          KIS_ACCOUNT_PRODUCT_CODE: ${{ secrets.KIS_ACCOUNT_PRODUCT_CODE }}
+          ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_SENDER:             ${{ secrets.GMAIL_SENDER }}
+          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENTS:        ${{ secrets.REPORT_RECIPIENTS }}
+        run: python main.py
+
+      - name: Upload PDF artifact (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-report-${{ github.run_id }}
+          path: "*.pdf"
+          if-no-files-found: ignore
+          retention-days: 7
