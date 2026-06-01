@@ -22,3 +22,7 @@ Python, GitHub Actions (daily cron). Key modules: collectors/, composer.py, emai
 ## Known issues / Do not repeat
 - Node.js 24 env var syntax differs — check before modifying workflow YAML
 - Errors must surface in step annotations, not silently swallowed
+
+## Linear
+Project: **stock-report-agent** (ID: `391e64ce-8921-4dfd-bb29-7e645efb7503`)
+When creating any ticket for this repo, always pass `project: "stock-report-agent"`.
