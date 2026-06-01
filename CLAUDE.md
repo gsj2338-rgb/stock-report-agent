@@ -26,3 +26,5 @@ Python, GitHub Actions (daily cron). Key modules: collectors/, composer.py, emai
 ## Linear
 Project: **stock-report-agent** (ID: `391e64ce-8921-4dfd-bb29-7e645efb7503`)
 When creating any ticket for this repo, always pass `project: "stock-report-agent"`.
+
+## Wiki type: code
