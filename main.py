@@ -1,3 +1,4 @@
+from __future__ import annotations
 import argparse
 import logging
 import os
@@ -14,7 +15,7 @@ from composer import Composer
 from emailer import Emailer
 from pdf_generator import generate as generate_pdf
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
 
 logging.basicConfig(
     level=logging.INFO,

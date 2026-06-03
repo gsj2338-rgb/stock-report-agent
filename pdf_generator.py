@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 pdf_generator.py — Builds a properly formatted A4 PDF report from collected stock data.
 Uses Pretendard Korean font (installed at ~/Library/Fonts/Pretendard-*.ttf).
@@ -25,22 +26,44 @@ logger = logging.getLogger(__name__)
 _FONT_DIR = os.path.expanduser("~/Library/Fonts")
 _fonts_ok = False
 
+_KOREAN_FONT_CANDIDATES = [
+    # Pretendard (최우선)
+    (os.path.expanduser("~/Library/Fonts/Pretendard-Regular.ttf"), "KR"),
+    (os.path.expanduser("~/Library/Fonts/Pretendard-Bold.ttf"),    "KR-B"),
+    (os.path.expanduser("~/Library/Fonts/Pretendard-Light.ttf"),   "KR-L"),
+    # AppleGothic (맥 기본 한글 폰트)
+    ("/System/Library/Fonts/Supplemental/AppleGothic.ttf", "KR"),
+    ("/System/Library/Fonts/Supplemental/AppleGothic.ttf", "KR-B"),
+    ("/System/Library/Fonts/Supplemental/AppleGothic.ttf", "KR-L"),
+]
+
 
 def _register_fonts() -> None:
     global _fonts_ok
     if _fonts_ok:
         return
-    candidates = [
-        (os.path.join(_FONT_DIR, "Pretendard-Regular.ttf"), "KR"),
-        (os.path.join(_FONT_DIR, "Pretendard-Bold.ttf"),    "KR-B"),
-        (os.path.join(_FONT_DIR, "Pretendard-Light.ttf"),   "KR-L"),
-    ]
+    # Pretendard 시도
     try:
-        for path, name in candidates:
-            pdfmetrics.registerFont(TTFont(name, path))
+        pdfmetrics.registerFont(TTFont("KR",   os.path.expanduser("~/Library/Fonts/Pretendard-Regular.ttf")))
+        pdfmetrics.registerFont(TTFont("KR-B", os.path.expanduser("~/Library/Fonts/Pretendard-Bold.ttf")))
+        pdfmetrics.registerFont(TTFont("KR-L", os.path.expanduser("~/Library/Fonts/Pretendard-Light.ttf")))
         _fonts_ok = True
-    except Exception as e:
-        logger.warning(f"Pretendard font not found, falling back to Helvetica: {e}")
+        logger.info("Font: Pretendard loaded")
+        return
+    except Exception:
+        pass
+    # AppleGothic 시도 (Bold/Light도 같은 파일로 등록)
+    try:
+        apple_gothic = "/System/Library/Fonts/Supplemental/AppleGothic.ttf"
+        pdfmetrics.registerFont(TTFont("KR",   apple_gothic))
+        pdfmetrics.registerFont(TTFont("KR-B", apple_gothic))
+        pdfmetrics.registerFont(TTFont("KR-L", apple_gothic))
+        _fonts_ok = True
+        logger.info("Font: AppleGothic loaded")
+        return
+    except Exception:
+        pass
+    logger.warning("No Korean font found, Korean text will not render correctly")
 
 
 # ---------------------------------------------------------------------------

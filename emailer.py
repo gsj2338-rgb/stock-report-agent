@@ -1,6 +1,8 @@
+from __future__ import annotations
 import smtplib
 import logging
 from email import encoders
+from email.header import Header
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -30,7 +32,7 @@ class Emailer:
         Raises on SMTP or auth failure.
         """
         msg = MIMEMultipart("mixed")
-        msg["Subject"] = subject
+        msg["Subject"] = Header(subject, "utf-8")
         msg["From"] = self.sender
         msg["To"] = ", ".join(recipients)
         msg.attach(MIMEText(text_body, "plain", "utf-8"))
@@ -46,6 +48,6 @@ class Emailer:
             server.ehlo()
             server.starttls()
             server.login(self.sender, self.app_password)
-            server.sendmail(self.sender, recipients, msg.as_string())
+            server.send_message(msg)
 
         logger.info(f"Email sent to {recipients}")
